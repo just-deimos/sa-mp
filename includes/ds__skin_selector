@@ -295,7 +295,8 @@ stock CallSelectorFilterByName__(playerid, classid, _filter_name[], skins_array[
  
 /*
     Функция изменяет фильтр по умолчанию
- 
+
+
     Возвращает:
         ID фильтра               - Фильтр успешно изменён
         INVALID_SS_FILTER_ID    - Фильтр не найден
