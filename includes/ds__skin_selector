@@ -1,0 +1,799 @@
+/*
+** Copyright (c) 2016 DeimoS.
+**
+** This software is provided 'as-is', without any express or implied
+** warranty. In no event will the authors be held liable for any damages
+** arising from the use of this software.
+**
+** Permission is granted to anyone to use this software for any purpose,
+** including commercial applications, and to alter it and redistribute it
+** freely, subject to the following restrictions:
+**
+** 1. The origin of this software must not be misrepresented; you must not
+**    claim that you wrote the original software. If you use this software
+**    in a product, an acknowledgement in the product documentation would be
+**    appreciated but is not required.
+** 2. Altered source versions must be plainly marked as such, and must not be
+**    misrepresented as being the original software.
+** 3. This notice may not be removed or altered from any source distribution.
+*/
+
+#if defined _inc_ds__skin_selector
+	#undef _inc_ds__skin_selector
+#endif
+
+#if !defined CallSelectorFilterByID
+#define     CallSelectorFilterByID(%0,%1)   \
+            CallSelectorFilterByID__(playerid, classid, %0, %1, sizeof(%1))
+#endif
+ 
+#if !defined CallSelectorFilterByName
+#define     CallSelectorFilterByName(%0,%1)     \
+            CallSelectorFilterByName__(playerid, classid, %0, %1, sizeof(%1))      
+#endif
+ 
+#if !defined CreateNewSelectorFilter
+#define     CreateNewSelectorFilter(%0,%1,%2)   \
+            CreateNewSelectorFilter__(%0,%1)
+#endif
+ 
+#if !defined isnull
+    #define isnull(%1) \
+                (((%1[0]) == 0) || ((%1[0]) == '\1') && ((%1[1]) == 0))
+#endif
+ 
+#if !defined INVALID_SS_FILTER_ID
+    #define     INVALID_SS_FILTER_ID                -1
+#endif
+ 
+#if !defined MAX_REGISTERED_ID_FILTERS             
+    #define     MAX_REGISTERED_ID_FILTERS           10
+#endif
+ 
+#if !defined MAX_REGISTERED_NAME_FILTERS               
+    #define     MAX_REGISTERED_NAME_FILTERS         30
+#endif             
+ 
+/*  
+    ================================================================================================
+    ================================================================================================
+    ================================================================================================
+*/
+ 
+enum e_DSKIN_SELECTOR_INFO
+{
+    bool:registered_id_filters,
+    registered_name_filters[MAX_REGISTERED_NAME_FILTERS+1],
+}
+new dss_info[MAX_REGISTERED_ID_FILTERS][e_DSKIN_SELECTOR_INFO],
+    dss_player_skin[MAX_PLAYERS],
+    default_skinfilter;
+ 
+ 
+/*  
+    ================================================================================================
+    ================================================================================================
+    ================================================================================================
+*/
+/*
+    Функция создаёт новый фильтр
+ 
+    Для использования существует макрос, в котором, для наглядности, добавлен параметр для массива с скинами:
+        CreateNewSelectorFilter(filterskin_id, filter_name[], skins_array[])
+ 
+    Возвращает:
+        1                       - Фильтр успешно создан
+        INVALID_SS_FILTER_ID    - Создать фильтр не удалось (превышен лимит/указан невалидный или занятый ID)
+ 
+    Параметры:
+        skin_filter_id          - ID, под которым будет создан новый фильтр
+        filter_name[]           - Имя для нового фильтра
+        skins_array[]           - Массив, в котором хранятся скины для фильтра
+*/  
+stock CreateNewSelectorFilter__(filterskin_id, filter_name[])
+{
+    if(strlen(filter_name) > MAX_REGISTERED_NAME_FILTERS)
+        return printf("\n\nОшибка: Превышен лимит символов в имени фильтра. Фильтр \"%s\" не создан\n\n", filter_name), INVALID_SS_FILTER_ID;
+    if(!(0 <= filterskin_id < MAX_REGISTERED_ID_FILTERS))
+        return printf("\n\nОшибка: Указан неверный ID фильтра. [Минимальный ID: 0] [Максимальный: %d]\nФильтр \"%s\" не создан\n\n", MAX_REGISTERED_ID_FILTERS-1, filter_name), INVALID_SS_FILTER_ID;
+    if(dss_info[filterskin_id][registered_id_filters] == false)
+    {
+        dss_info[filterskin_id][registered_id_filters] = true;
+        dss_info[filterskin_id][registered_name_filters][0] = '\0';
+        strcat(dss_info[filterskin_id][registered_name_filters], filter_name);
+        return filterskin_id;
+    }
+    return printf("\n\nОшибка: Обнаружена попытка записать фильтр (\"%s\") в занятый слот (%d).\nФильтр не создан.\n\n", filter_name, filterskin_id), INVALID_SS_FILTER_ID;
+}
+ 
+/*
+    Функция обрабатывает созданный фильтр (используется в OnPlayerRequestClass) по указанному ID.
+ 
+    Для использования существует удобный макрос, отсекающий ненужные параметры:
+        CallSelectorFilterByID(skin_filter_id, skins_array[])
+ 
+    Возвращает:
+        1                       - В случае успешной обработки кода (фильтр создан и совпадает с тем, что включен у игрока)
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        skin_filter_id          - ID фильтра для обработки
+        skins_array[]           - Массив, в котором хранятся скины для фильтра
+*/
+stock CallSelectorFilterByID__(playerid, classid, skin_filter_id, skins_array[], size = sizeof skins_array)
+{
+    if(!(0 <= skin_filter_id < MAX_REGISTERED_ID_FILTERS))
+        return SendClientMessage(playerid, 0xFF0000FF, "Ошибка: {FFFFFF}Обнаружена попытка обратиться к невалидному ID фильтра."), INVALID_SS_FILTER_ID;
+   
+    if(GetPVarInt(playerid, "Skins_Filter") != skin_filter_id)
+        return INVALID_SS_FILTER_ID;
+ 
+    if(dss_info[skin_filter_id][registered_id_filters] == false)
+        return SendClientMessage(playerid, 0xFF0000FF, "Ошибка: {FFFFFF}Обнаружена попытка обратиться к несуществующему ID фильтра."), INVALID_SS_FILTER_ID;
+ 
+    new bool:direction,
+        next_classid = GetPVarInt(playerid, "Next_ClassID"),
+        last_classid = GetPVarInt(playerid, "Last_ClassID");
+ 
+    if(GetPVarInt(playerid, "SkinSelect_Death") == 2)
+    {
+        DeletePVar(playerid, "SkinSelect_Death");
+        for(new i, s = dss_player_skin[playerid]; i < size; i++)
+        {
+            if(s != skins_array[i]) continue;
+            SetPVarInt(playerid, "Next_ClassID", i);
+            SetPVarInt(playerid, "Last_ClassID", classid);
+            SetPlayerSkin(playerid, s);
+            break;
+        }
+    }
+    else
+    {
+        if(last_classid == -1) direction = (classid == 1 ? true : false);
+        else
+        {
+            if(classid > last_classid)
+            {
+                if(last_classid != 0 || classid != 309) direction = true;
+                else direction = false;
+                //Игрок нажимает кнопку ">>"
+            }
+            else if(classid < last_classid)
+            {
+                if(last_classid != 309 || classid != 0) direction = false;
+                else direction = true;
+                //Игрок нажимает кнопку "<<"
+            }
+        }
+ 
+        if(last_classid == -1)
+        {
+            SetPlayerSkin(playerid, skins_array[0]);
+            next_classid = 0;
+        }
+        else
+        {
+            if(direction == true)
+            {
+                if(next_classid == size-1) next_classid = 0;
+                else if(next_classid > size-1) next_classid = 1;
+                else next_classid++;
+            }
+            else
+            {
+                if(next_classid <= 0 || next_classid > size-1) next_classid = size-1;
+                else next_classid--;
+            }
+            SetPlayerSkin(playerid, skins_array[next_classid]);
+        }
+        SetPVarInt(playerid, "Next_ClassID", next_classid);
+        SetPVarInt(playerid, "Last_ClassID", classid);
+    }
+    return 1;
+}
+ 
+ 
+/*
+    Функция обрабатывает созданный фильтр (используется в OnPlayerRequestClass) по указанному имени.
+ 
+    Для использования существует удобный макрос, отсекающий ненужные параметры:
+        CallSelectorFilterByName(_filter_name[], skins_array[])
+ 
+    Возвращает:
+        1                       - В случае успешной обработки кода (фильтр создан и совпадает с тем, что включен у игрока)
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        _filter_name[]          - Имя фильтра для обработки
+        skins_array[]           - Массив, в котором хранятся скины для фильтра
+*/
+stock CallSelectorFilterByName__(playerid, classid, _filter_name[], skins_array[], size = sizeof skins_array)
+{
+    if(isnull(_filter_name))
+        return SendClientMessage(playerid, 0xFF0000FF, "Ошибка: {FFFFFF}Обнаружена попытка обратиться к фильтру без указания его имени."), INVALID_SS_FILTER_ID;
+ 
+    new skin_filter_id = -1;
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(!strcmp(dss_info[i][registered_name_filters], _filter_name, true))
+        {
+            skin_filter_id = i;
+            break;
+        }
+    }
+       
+    if(skin_filter_id == -1)
+    {
+        new dss_string[48+MAX_REGISTERED_NAME_FILTERS+1];
+        format(dss_string, sizeof(dss_string), "Ошибка: {FFFFFF}Фильтр с именем \"%s\" не существует", _filter_name);
+        return SendClientMessage(playerid, 0xFF0000FF, dss_string), INVALID_SS_FILTER_ID;
+    }
+ 
+    if(GetPVarInt(playerid, "Skins_Filter") != skin_filter_id)
+        return INVALID_SS_FILTER_ID;
+ 
+    new bool:direction,
+        next_classid = GetPVarInt(playerid, "Next_ClassID"),
+        last_classid = GetPVarInt(playerid, "Last_ClassID");
+ 
+    if(GetPVarInt(playerid, "SkinSelect_Death") == 2)
+    {
+        DeletePVar(playerid, "SkinSelect_Death");
+        for(new i, s = dss_player_skin[playerid]; i < size; i++)
+        {
+            if(s != skins_array[i]) continue;
+            SetPVarInt(playerid, "Next_ClassID", i);
+            SetPVarInt(playerid, "Last_ClassID", classid);
+            SetPlayerSkin(playerid, s);
+            break;
+        }
+    }
+    else
+    {
+        if(last_classid == -1) direction = (classid == 1 ? true : false);
+        else
+        {
+            if(classid > last_classid)
+            {
+                if(last_classid != 0 || classid != 309) direction = true;
+                else direction = false;
+                //Игрок нажимает кнопку ">>"
+            }
+            else if(classid < last_classid)
+            {
+                if(last_classid != 309 || classid != 0) direction = false;
+                else direction = true;
+                //Игрок нажимает кнопку "<<"
+            }
+        }
+ 
+        if(last_classid == -1)
+        {
+            SetPlayerSkin(playerid, skins_array[0]);
+            next_classid = 0;
+        }
+        else
+        {
+            if(direction == true)
+            {
+                if(next_classid == size-1) next_classid = 0;
+                else if(next_classid > size-1) next_classid = 1;
+                else next_classid++;
+            }
+            else
+            {
+                if(next_classid <= 0 || next_classid > size-1) next_classid = size-1;
+                else next_classid--;
+            }
+            SetPlayerSkin(playerid, dss_player_skin[playerid] = skins_array[next_classid]);
+        }
+        SetPVarInt(playerid, "Next_ClassID", next_classid);
+        SetPVarInt(playerid, "Last_ClassID", classid);
+    }
+    return 1;
+}
+ 
+/*
+    Функция изменяет фильтр по умолчанию
+ 
+    Возвращает:
+        ID фильтра               - Фильтр успешно изменён
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        filterid                - ID фильтра для установки по умолчанию
+*/
+stock SetDefaultSelectorFilter_ID(filterid)
+{
+    if(!(0 <= filterid < MAX_REGISTERED_ID_FILTERS))
+        return printf("Ошибка: {FFFFFF}Обнаружена попытка изменить фильтр по умолчанию на невалидный ID (%d | Мин: 0 | Макс: %d).", filterid, MAX_REGISTERED_ID_FILTERS-1), INVALID_SS_FILTER_ID;
+    else if(dss_info[filterid][registered_id_filters] == false)
+        return print("Ошибка: {FFFFFF}Обнаружена попытка изменить фильтр по умолчанию на несущестующий."),INVALID_SS_FILTER_ID;
+    else
+        return default_skinfilter = filterid;
+}
+ 
+/*
+    Функция изменяет фильтр по умолчанию
+ 
+    Возвращает:
+        ID фильтра               - Фильтр успешно изменён
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        _filter_name[]          - Имя фильтра для установки по умолчанию
+*/
+stock SetDefaultSelectorFilter_Name(_filter_name[])
+{
+    if(isnull(_filter_name))
+        return print("Ошибка: {FFFFFF}Обнаружена попытка изменить фильтр по умолчанию без указания имени фильтра."), INVALID_SS_FILTER_ID;
+ 
+    new filterid = -1;
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(!strcmp(dss_info[i][registered_name_filters], _filter_name, true))
+        {
+            filterid = i;
+            break;
+        }
+    }
+       
+    if(filterid == -1)
+    {
+        return printf("Ошибка: {FFFFFF}Фильтр с именем \"%s\" не существует", _filter_name), INVALID_SS_FILTER_ID;
+    }
+    else
+        return default_skinfilter = filterid;
+}
+ 
+/*
+    Функция возвращает ID фильтра, установленного по умолчанию
+ 
+    Возвращает:
+        ID фильтра
+ 
+    Параметры:
+        ---
+*/
+stock GetDefaultSelectorFilter()
+{
+    return default_skinfilter;
+}
+ 
+/*
+    Функция удаляет указанный фильтр. Фильтр указывается в виде ID
+ 
+    Возвращает:
+        ID фильтра               - Фильтр успешно удалён
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        filterid                - ID фильтра для удаления
+*/
+stock DeleteSelectorFilter_ID(filterid)
+{
+    if(!(0 <= filterid < MAX_REGISTERED_ID_FILTERS))
+        return printf("Ошибка: {FFFFFF}Обнаружена попытка удалить фильтр с указанием невалидного ID (%d | Мин: 0 | Макс: %d).", filterid, MAX_REGISTERED_ID_FILTERS-1), INVALID_SS_FILTER_ID;
+    else if(dss_info[filterid][registered_id_filters] == false)
+        return print("Ошибка: {FFFFFF}Обнаружена попытка удалить несуществующий фильтр."),INVALID_SS_FILTER_ID;
+    else
+    {
+        dss_info[filterid][registered_id_filters] = false;
+        dss_info[filterid][registered_name_filters][0] = '\0';
+    }
+    return filterid;
+}
+ 
+/*
+    Функция удаляет указанный фильтр. Фильтр указывается в виде имени
+ 
+    Возвращает:
+        ID фильтра               - Фильтр успешно удалён
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        _filter_name[]          - Имя фильтра для удаления
+*/
+stock DeleteSelectorFilter_Name(_filter_name[])
+{
+    if(isnull(_filter_name))
+        return  print("Ошибка: {FFFFFF}Обнаружена попытка удалить фильтр без указания его имени."), INVALID_SS_FILTER_ID;
+ 
+    new filterid = -1;
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(!strcmp(dss_info[i][registered_name_filters], _filter_name, true))
+        {
+            filterid = i;
+            break;
+        }
+    }
+       
+    if(filterid == -1)
+        return  print("Ошибка: {FFFFFF}Обнаружена попытка удалить несуществующий фильтр."), INVALID_SS_FILTER_ID;
+    else
+    {
+        dss_info[filterid][registered_id_filters] = false;
+        dss_info[filterid][registered_name_filters][0] = '\0';
+    }
+    return filterid;
+}
+ 
+/*
+    Функция производит поиск фильтра по ID
+ 
+    Возвращает:
+        Имя фильтра           - Фильтр существует
+        "Error"                 - Фильтр не найден
+ 
+    Параметры:
+        filterid                - ID фильтра для поиска
+*/
+stock GetSelectorFilterID(filterid)
+{
+    new dss_filter_string[MAX_REGISTERED_NAME_FILTERS+1] = "Error";
+    if(!(0 <= filterid < MAX_REGISTERED_ID_FILTERS) || dss_info[filterid][registered_id_filters] == false)
+        return dss_filter_string;
+    else
+    {  
+        dss_filter_string[0] = '\0';
+        strcat(dss_filter_string, dss_info[filterid][registered_name_filters]);
+        return dss_filter_string;
+    }  
+}
+ 
+/*
+    Функция производит поиск фильтра по имени
+ 
+    Возвращает:
+        ID фильтра               - Фильтр существует
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        _filter_name[]          - Имя фильтра для поиска
+*/
+stock GetSelectorFilterName(_filter_name[])
+{
+    if(isnull(_filter_name))
+        return INVALID_SS_FILTER_ID;
+ 
+    new filterid = -1;
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(!strcmp(dss_info[i][registered_name_filters], _filter_name, true))
+        {
+            filterid = i;
+            break;
+        }
+    }
+       
+    if(filterid == -1 ||  dss_info[filterid][registered_id_filters] == false)
+        return INVALID_SS_FILTER_ID;
+    else
+        return filterid;
+}
+ 
+/*
+    Функция проверяет существование (валидность) фильтра. Фильтр указывается в виде ID
+ 
+    Возвращает:
+        1                       - Фильтр существует
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        filterid                - ID фильтра для поиска
+*/
+stock IsSelectorFilterValid_ID(filterid)
+{
+    if(!(0 <= filterid < MAX_REGISTERED_ID_FILTERS) || dss_info[filterid][registered_id_filters] == false)
+        return INVALID_SS_FILTER_ID;
+    else
+        return 1;
+}
+ 
+/*
+    Функция проверяет существование (валидность) фильтра. Фильтр указывается в виде имени
+ 
+    Возвращает:
+        1                       - Фильтр существует
+        INVALID_SS_FILTER_ID    - Фильтр не найден
+ 
+    Параметры:
+        _filter_name[]          - Имя фильтра для поиска
+*/
+stock IsSelectorFilterValid_Name(_filter_name[])
+{
+    if(isnull(_filter_name))
+        return INVALID_SS_FILTER_ID;
+ 
+    new filterid = -1;
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(!strcmp(dss_info[i][registered_name_filters], _filter_name, true))
+        {
+            filterid = i;
+            break;
+        }
+    }
+       
+    if(filterid == -1 ||  dss_info[filterid][registered_id_filters] == false)
+        return INVALID_SS_FILTER_ID;
+    else
+        return 1;
+}
+ 
+/*
+    Функция позволяет изменить ID фильтра для игрока, указав ID фильтра
+ 
+    Возвращает:
+        1                       - Фильтр успешно изменён
+        INVALID_SS_FILTER_ID    - Произошла ошибка (игрок оффлайн/фильтр не существует и т.п.)
+ 
+    Параметры:
+        playerid                - ID игрока, которому нужно изменить фильтр
+        filterid                - ID фильтра, который нужно установить игроку
+        skins_array[]           - Массив, в котором хранятся скины для фильтра
+*/
+stock SetSelectorFilterForPlayer_ID(playerid, filterid, skins_array[])
+{
+    if(filterid == INVALID_SS_FILTER_ID
+        || !IsPlayerConnected(playerid)
+        || dss_info[filterid][registered_id_filters] == false)
+            return INVALID_SS_FILTER_ID;
+    else
+    {
+        if(GetPVarInt(playerid, "SkinSelect_PlayerStatus"))
+            SetPlayerSkin(playerid, dss_player_skin[playerid] = skins_array[0]);
+ 
+        DeletePVar(playerid, "Next_ClassID");
+        SetPVarInt(playerid, "Last_Skins_Filter", GetPVarInt(playerid, "Skins_Filter"));
+        SetPVarInt(playerid, "Skins_Filter", filterid);
+    }  
+    return 1;
+}
+ 
+/*
+    Функция позволяет изменить ID фильтра для игрока, указав имя фильтра
+ 
+    Возвращает:
+        1                       - Фильтр успешно изменён
+        INVALID_SS_FILTER_ID    - Произошла ошибка (игрок оффлайн/фильтр не существует и т.п.)
+ 
+    Параметры:
+        playerid                - ID игрока, которому нужно изменить фильтр
+        filter_name[]           - Имя фильтра, который нужно установить игроку
+        skins_array[]           - Массив, в котором хранятся скины для фильтра
+*/
+stock SetSelectorFilterForPlayer_Name(playerid, _filter_name[], skins_array[])
+{
+    if(isnull(_filter_name))
+        return SendClientMessage(playerid, 0xFF0000FF, "Ошибка: {FFFFFF}Обнаружена попытка изменить фильтр для игрока без указания имени фильтра."), INVALID_SS_FILTER_ID;
+ 
+    if(!IsPlayerConnected(playerid))
+            return INVALID_SS_FILTER_ID;
+ 
+    new filterid = -1;
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(!strcmp(dss_info[i][registered_name_filters], _filter_name, true))
+        {
+            filterid = i;
+            break;
+        }
+    }
+       
+    if(filterid == -1)
+    {
+        new dss_string[48+MAX_REGISTERED_NAME_FILTERS+1];
+        format(dss_string, sizeof(dss_string), "Ошибка: {FFFFFF}Фильтр с именем \"%s\" не существует", _filter_name);
+        return SendClientMessage(playerid, 0xFF0000FF, dss_string), INVALID_SS_FILTER_ID;
+    }
+    else
+    {
+        if(GetPVarInt(playerid, "SkinSelect_PlayerStatus"))
+            SetPlayerSkin(playerid, dss_player_skin[playerid] = skins_array[0]);
+ 
+        DeletePVar(playerid, "Next_ClassID");
+        SetPVarInt(playerid, "Last_Skins_Filter", GetPVarInt(playerid, "Skins_Filter"));
+        SetPVarInt(playerid, "Skins_Filter", filterid);
+    }  
+    return 1;
+}
+ 
+/*
+    Функция позволяет узнать ID фильтра, который установлен у игрока
+ 
+    Возвращает:
+        ID фильтра               - Игрок онлайн
+        INVALID_SS_FILTER_ID    - Игрок оффлайн
+ 
+    Параметры:
+        playerid                - ID игрока, фильтр которого нужно узнать
+*/
+stock GetSelectorFilterForPlayer(playerid)
+{
+    if(!IsPlayerConnected(playerid))
+        return INVALID_SS_FILTER_ID;
+    return GetPVarInt(playerid, "Skins_Filter");
+}
+ 
+/*
+    Функция возвращает первый свободный слот для фильтра
+ 
+    Возвращает:
+        ID фильтра
+ 
+    Параметры:
+*/
+stock GetSelectorFilterFreeID()
+{
+    for(new i; i < MAX_REGISTERED_ID_FILTERS; i++)
+    {
+        if(dss_info[i][registered_id_filters] == false) return i;
+    }
+    return INVALID_SS_FILTER_ID;   
+}
+/*  
+    ================================================================================================
+    ================================================================================================
+    ================================================================================================
+*/
+public OnGameModeInit()
+{
+    for(new i = 1, s = 0; i <= 311; i++, s++)
+    {
+        switch(i)
+        {
+            case 74: continue;
+            default:
+            {
+                AddPlayerClass(i, 2016.5792, -1281.3159, 23.9816, 52.6876, 0, 0, 0, 0, 0, 0);
+            }  
+        }
+    }
+    #if defined dss_OnGameModeInit
+        return dss_OnGameModeInit();
+    #else
+        return 1;
+    #endif
+}
+#if defined _ALS_OnGameModeInit
+    #undef OnGameModeInit
+#else
+    #define _ALS_OnGameModeInit
+#endif
+#define OnGameModeInit dss_OnGameModeInit
+#if defined dss_OnGameModeInit
+    forward dss_OnGameModeInit();
+#endif
+ 
+ 
+public OnPlayerConnect(playerid)
+{
+    SetPVarInt(playerid, "Last_Skins_Filter", default_skinfilter);
+    SetPVarInt(playerid, "Skins_Filter", default_skinfilter);
+    SetPVarInt(playerid, "Last_ClassID", -1);
+    SetPVarInt(playerid, "SkinSelect_PlayerStatus", 1);
+    #if defined dss_OnPlayerConnect
+        return dss_OnPlayerConnect(playerid);
+    #else
+        return 1;
+    #endif
+}
+#if defined _ALS_OnPlayerConnect
+    #undef OnPlayerConnect
+#else
+    #define _ALS_OnPlayerConnect
+#endif
+#define OnPlayerConnect dss_OnPlayerConnect
+#if defined dss_OnPlayerConnect
+    forward dss_OnPlayerConnect(playerid);
+#endif
+ 
+ 
+public OnPlayerRequestClass(playerid, classid)
+{
+    OnPlayerSelectedSkin(playerid, classid);
+    #if defined dss_OnPlayerRequestClass
+        return dss_OnPlayerRequestClass(playerid, classid);
+    #else
+        return 1;
+    #endif
+}
+#if defined _ALS_OnPlayerRequestClass
+    #undef OnPlayerRequestClass
+#else
+    #define _ALS_OnPlayerRequestClass
+#endif
+#define OnPlayerRequestClass dss_OnPlayerRequestClass
+#if defined dss_OnPlayerRequestClass
+    forward dss_OnPlayerRequestClass(playerid, classid);
+#endif
+ 
+public OnPlayerSpawn(playerid)
+{
+    if(GetPVarInt(playerid, "SkinSelect_PlayerStatus"))
+    {
+        DeletePVar(playerid, "SkinSelect_PlayerStatus");
+        SetPlayerSkin(playerid, dss_player_skin[playerid]);
+    }
+    #if defined dss_OnPlayerSpawn
+        return dss_OnPlayerSpawn(playerid);
+    #else
+        return 1;
+    #endif
+}
+#if defined _ALS_OnPlayerSpawn
+    #undef OnPlayerSpawn
+#else
+    #define _ALS_OnPlayerSpawn
+#endif
+#define OnPlayerSpawn dss_OnPlayerSpawn
+#if defined dss_OnPlayerSpawn
+    forward dss_OnPlayerSpawn(playerid);
+#endif
+ 
+ 
+ 
+public OnPlayerDeath(playerid, killerid, reason)
+{
+    SetPVarInt(playerid, "SkinSelect_PlayerStatus", 2);
+    #if defined dss_OnPlayerDeath
+        return dss_OnPlayerDeath(playerid, killerid, reason);
+    #else
+        return 1;
+    #endif
+}
+#if defined _ALS_OnPlayerDeath
+    #undef OnPlayerDeath
+#else
+    #define _ALS_OnPlayerDeath
+#endif
+#define OnPlayerDeath dss_OnPlayerDeath
+#if defined dss_OnPlayerDeath
+    forward dss_OnPlayerDeath(playerid, killerid, reason);
+#endif 
+ 
+ 
+stock dss_AddPlayerClass()
+{
+    print("\n\n\n\nSkin Selector Error: Обнаружена функция AddPlayerClass.\nИспользование данной функции приведёт к ошибкам в работе инклуда \"Skin Selector\"\n");
+    return 1;
+}
+#if defined _ALS_AddPlayerClass
+    #undef AddPlayerClass
+#else
+    #define _ALS_AddPlayerClass
+#endif
+ 
+#define AddPlayerClass(%1) dss_AddPlayerClass()
+ 
+stock dss_AddPlayerClassEx()
+{
+    print("\n\n\n\nSkin Selector Error: Обнаружена функция AddPlayerClassEx.\nИспользование данной функции приведёт к ошибкам в работе инклуда \"Skin Selector\"\n");
+    return 1;
+}
+#if defined _ALS_AddPlayerClassEx
+    #undef AddPlayerClassEx
+#else
+    #define _ALS_AddPlayerClassEx
+#endif
+ 
+#define AddPlayerClassEx(%1) dss_AddPlayerClassEx()
+ 
+ 
+stock dss_ForceClassSelection(playerid)
+{
+    SetPVarInt(playerid, "SkinSelect_PlayerStatus", 3);
+    return ForceClassSelection(playerid);
+}
+#if defined _ALS_ForceClassSelection
+    #undef ForceClassSelection
+#else
+    #define _ALS_ForceClassSelection
+#endif
+ 
+#define ForceClassSelection dss_ForceClassSelection
+ 
+ 
+forward OnPlayerSelectedSkin(playerid, classid);
